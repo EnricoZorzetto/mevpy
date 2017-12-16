@@ -1,12 +1,9 @@
 # MEV_python
 
-A Python Package For Extreme
-Value Analysis (in the following MEVP, Metatstatistical Extreme Value
-Analysis in Python). This is a set of functions that implements the Metasta-
-tistical Extreme Value (MEV) Distribution and related
+A Python Package For Extreme Value Analysis in Python is a set of functions that implement 
+the Metastatistical Extreme Value (MEV) Distribution and related
 functions. The package was developed for application to rainfall daily data,
-but the method is general and can be applied to different fields. Some
-example of applications to rainfall data are included.
+but the method is general and may be applied to different fields. 
 
 Enrico Zorzetto acknowledges support from the Division of Earth and Ocean
 Sciences, Duke University and the NASA Earth and Space Science Fellow-
