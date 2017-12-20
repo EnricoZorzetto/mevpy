@@ -10,8 +10,9 @@ Instructions:
 download and unzip the folder mevpy with its content on your working directory. An example of application to a time series can be found in the test_mevpy.ipynb notebook
 
 Dependancies: 
-The package requires Python version 3.xx. installed with other common packages 
-(numpy, scipy, pandas, matplotlib)
+The package works with any version of Python 3 and requires a few common packages 
+(numpy, scipy, pandas, and matplotlib). Recommended convention to import the package is 
+'import mevpy as mev'
 
 Enrico Zorzetto acknowledges support from the Division of Earth and Ocean
 Sciences, Duke University and the NASA Earth and Space Science Fellow-
