@@ -1,5 +1,5 @@
 
-# from setuptools import setup
+
 from distutils.core import setup
 
 setup(
@@ -9,9 +9,9 @@ setup(
    author='Enrico Zorzetto',
    author_email='enrico.zorzetto@duke.edu',
    url = 'https://github.com/EnricoZorzetto/mevpy'
-   download_url = 'https://github.com/EnricoZorzetto/mevpy/archive/1.01.tar.gz'
-   packages=['mevpy'],  #same as name
-   install_requires=['matplotlib', 'pandas', 'numpy', 'scipy'], #external packages as dependencies
+   download_url = 'https://github.com/EnricoZorzetto/mevpy/archive/1.01.tar.gz',
+   packages=['mevpy'],  
+   install_requires=['matplotlib', 'pandas', 'numpy', 'scipy'], 
 )
 
 
