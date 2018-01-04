@@ -16,10 +16,6 @@
         (e.g., with more than 10% of missing values)
 ###############################################################################
 '''
-# add
-# confidence intervals
-# declustering
-# threshold selection functions
 
 import sys
 import numpy as np
