@@ -21,8 +21,8 @@ Dependencies:
 The package works with any version of Python 3 and requires the following packages: numpy, scipy, pandas, and matplotlib. Recommended convention to import this package is 'import mevpy as mev'.
 
 Enrico Zorzetto acknowledges support from the Division of Earth and Ocean
-Sciences, Duke University and the NASA Earth and Space Science Fellow-
-ship (NESSF 17-EARTH17F-0270).
+Sciences, Duke University and the NASA Earth and Space Science Fellowship 
+(NESSF 17-EARTH17F-0270).
 
 For further information please contact me at enrico.zorzetto@duke.edu
 
