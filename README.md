@@ -6,15 +6,6 @@ Metastatistical Extreme Value Analysis in Python (mevpy) is a set of functions t
 the Metastatistical Extreme Value (MEV) Distribution and related
 methods. The package was developed for application to rainfall daily data,
 but the method is general and may be applied to different fields. 
-
-Instructions:
-To install the package, run the setup.py file as follows: 
-
-$ git clone https://github.com/EnricoZorzetto/mevpy 
-$ cd path/to/mevpy
-$ python setup.py install
-
-Alternatively, place the folder mevpy with its content on your project working directory. 
 An example of application can be found in tests/test_mevpy.ipynb notebook.
 
 Dependencies: 
