@@ -970,7 +970,7 @@ def cross_validation(df, ngen, ncal, nval, tr_min = 5, ws=[1],
             N = np.zeros(ncal2)
             for iiw in range(ncal2):
                 sample = datamat_cal_2[iiw,:]
-                wets = sample[sample > 0]
+                wets = sample[sample > MEV_thresh]
                 N[iiw]=np.size(wets)
                 
             C = np.repeat(Ci, winsize)
