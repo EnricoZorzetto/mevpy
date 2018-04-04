@@ -389,7 +389,7 @@ def mev_fit(df, ws = 1, how = 'pwm', threshold = 0):
     N = np.zeros(ncal2)
     for iiw in range(ncal2):
         sample = datamat_cal_2[iiw,:]
-        wets = sample[sample > 0]
+        wets = sample[sample > threshold]
         N[iiw]=np.size(wets)
         
     C = np.repeat(Ci, winsize)
