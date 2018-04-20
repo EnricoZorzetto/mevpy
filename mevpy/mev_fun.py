@@ -2,27 +2,27 @@
 ''' 
 ###############################################################################
 
-        Entico Zorzetto, 9/10/2017  
+        Enrico Zorzetto, 9/10/2017
         enrico.zorzetto@duke.edu
         
         Set of functions to  calibrate and validate the MEV distribution
-        most functions are to be applied to data frames 
+        most functions are to be applied to Pandas data frames
         with the following fields:
             'PRCP' :: for the daily rainfall values
             'YEAR' :: for the observation year (in format yyyy)
             'DATE' :: date in format yyyymmdd
-        years with just a few observation should not be used 
-        (e.g., with more than 10% of missing values)
+
 ###############################################################################
 '''
-# import sys
+
 import numpy as np
 import pandas as pd
 import scipy as sc
+import matplotlib.pyplot as plt
 import mevpy.gev_fun as gev
 from scipy.special import gamma
-from scipy.stats import exponweib
-import matplotlib.pyplot as plt
+from scipy.stats import exponweib, pearsonr
+
 
 ###############################################################################
 ###############################################################################
@@ -46,7 +46,7 @@ def wei_fit(sample, how = 'pwm', threshold = 0, std = False, std_how = 'boot', s
         compute parameter est. standard deviations. parstd
         and their covariance matrix varcov
         if std_how = 'boot' bootstrap is used 
-        if std_how = 'hess' hessian is used (onbly available for max like.)
+        if std_how = 'hess' hessian is used (only available for max like.)
         std_num --> number or resamplings in the bootstrap procedure.
         default is 1000. 
         --------------------------------------------------------------------'''
@@ -80,10 +80,10 @@ def wei_fit(sample, how = 'pwm', threshold = 0, std = False, std_how = 'boot', s
 def wei_boot(sample, fitfun, npar = 2, ntimes = 1000):
     '''non parametric bootstrap technique 
     for computing confidence interval for a distribution
-    (when I do not know the asympt properties of the distr.)
+    (when I do not know the asymptotic properties of the distr.)
     return std and optional pdf of fitted parameters  
     and their covariance matrix varcov
-    fit to a sample of a distribution using the fitting function fittinfun
+    fit to a sample of a distribution using the fitting function fitfun
     with a number of parameters npar 
     ONLY FOR WEIBULL
     Ignore the first output parameter - N'''
@@ -102,14 +102,13 @@ def wei_boot(sample, fitfun, npar = 2, ntimes = 1000):
 def wei_fit_pwm(sample, threshold = 0): 
     ''' fit a 2-parameters Weibull distribution to a sample 
     by means of Probability Weighted Moments (PWM) matching (Greenwood 1979)
-    only observations larger than a value 'threshold' are used for the fit
+    using only observations larger than a value 'threshold' are used for the fit
     -- threshold without renormalization -- it assumes the values below are 
-    non existent. Default threshold = 0
-    
+    not present. Default threshold = 0    
     INPUT:: sample (array with observations)
            threshold (default is = 0)
     OUTPUT::
-    returns numerosity of the sample (n) (only values above threshold)
+    returns dimension of the sample (n) (only values above threshold)
     Weibull scale (c) and shape (w) parameters '''    
     sample = np.asarray(sample) # from list to Numpy array
     wets   = sample[sample > threshold]
@@ -121,6 +120,42 @@ def wei_fit_pwm(sample, threshold = 0):
         real_ii = ii + 1
         M1hat   = M1hat + x[ii]*(n - real_ii) 
     M1hat = M1hat/(n*(n-1))
+    c     = M0hat/gamma( np.log(M0hat/M1hat)/np.log(2)) # scale par
+    w     = np.log(2)/np.log(M0hat/(2*M1hat)) # shape par
+    return  n, c, w
+
+
+def wei_fit_pwm_cens(sample, threshold = 0): 
+    ''' fit a 2-parameters Weibull distribution to a sample 
+    by means of censored Probability Weighted Moments (CPWM) - Wang, 1999
+    only observations larger than a value 'threshold' are used for the fit
+    but the probability mass of the observations below threshold is accounted for.
+    compute the first two PWMs
+    ar and br are linear comb of each other, perfectly equivalent
+    I use censoring on the br as proposed by Wang 1990
+    so that I am censoring the lower part of the distribution
+    Default threshold = 0
+    INPUT:: sample (array with observations)
+           threshold (default is = 0)
+    OUTPUT::
+    returns numerosity of the sample (n) (only values above threshold)
+    Weibull scale (c) and shape (w) parameters '''    
+    sample = np.asarray(sample) # from list to Numpy array
+    wets   = sample[sample > 0]
+    x      = np.sort(wets) # sort ascend by default
+    b0  = 0.0
+    b1  = 0.0
+    n      = x.size # sample size
+    for ii in range(n): 
+        real_ii = ii + 1
+        if x[ii]>threshold:
+            b1=b1+x[ii]*(real_ii-1)
+            b0=b0+x[ii]
+    b1=b1/(n*(n-1))
+    b0=b0/n
+    # obtain ar=Mrhat  as linear combination of the first two br
+    M0hat = b0
+    M1hat = b0 - b1
     c     = M0hat/gamma( np.log(M0hat/M1hat)/np.log(2)) # scale par
     w     = np.log(2)/np.log(M0hat/(2*M1hat)) # shape par
     return  n, c, w
@@ -143,7 +178,6 @@ def wei_quant(Fi, C, w, ci = False, varcov = []):
             # dx/dC and dx/dw
             DEL = np.array([ (-np.log(yr))**(1/w),
                    C*(-np.log(yr))**(1/w)*np.log(-np.log(1-Fi[ii])) ])
-    
             prod1 = np.dot(varcov, DEL)
             varz = np.dot( prod1, DEL)    
             stdz = np.sqrt(varz)
@@ -162,7 +196,6 @@ def wei_pdf(x,C,W):
     x = np.asarray(x) # transform to numpy array
     is_scalar = False if x.ndim > 0 else True # create flag for output
     x.shape = (1,)*(1-x.ndim) + x.shape # give it dimension 1 if scalar
-    # do my calculations
     pdf = W/C*(x/C)**(W - 1)*np.exp(-(x/C)**W )   
     pdf = pdf if not is_scalar else pdf[0]
     return  pdf
@@ -261,13 +294,13 @@ def wei_fit_mlpy(sample):
 
 
 def wei_fit_ml(sample, std = False):
-    '''
+    '''--------------------------------------------------------------
     fit Weibull by means of Maximum_Likelihood _Estimator (MLE)
     finding numerically the max of the likelihood function
     return n size of sample >0 (used for fit)
     if std = True compute standard deviations and covariances 
     of parameters C and w.
-    '''    
+    ----------------------------------------------------------------'''
     sample       =  np.array(sample)
     sample2      = sample[sample > 0 ]   
     x            = sample2
@@ -288,7 +321,6 @@ def wei_fit_ml(sample, std = False):
 
 
 def wei_negloglike(parhat, data):
-    # not sure - check this function -
     ''' compute Weibull neg log likelihood function
     for a given sample xi and estimated parameters C,w'''
     C = parhat[0]
@@ -306,8 +338,9 @@ def wei_negloglike(parhat, data):
 
 ###############################################################################
 ###############################################################################
-    
-def mev_fun(y,pr,N,C,W): 
+
+
+def mev_fun(y, pr, N, C, W):
     ''' MEV distribution function, to minimize numerically 
     for computing quantiles'''
     nyears = N.size
@@ -315,49 +348,97 @@ def mev_fun(y,pr,N,C,W):
     return mev0f
 
 
-def mev_quant(Fi,x0,N,C,W): 
-    '''  computes MEV quantiles for given non exceedance probabailities Fi'''
+def mev_quant(Fi, x0, N, C, W, potmode = True, thresh = 0):
+    '''--------------------------------------------------------------------
+    computes the MEV quantile for given non exceedance prob. in Fi
+    arguments:
+    Fi: non exceedance probability (either scalar or array of values)
+    x0: starting guess for numerical solution
+    N, C, W: Yearly parameters of MEV distribution
+    potmode: if True, considers the distributions of value above threshold (default is True)
+    (In practice if potmode=True, the distribution of excesses over threshold is computed
+    and then from it the cdf is computed for the effective quantile = quant - thresh)
+    thresh: threshold for defining ordinary events (default is zero)
+    returns:
+    quant -> single quantile, or array of quantiles
+    flags -> flag = 0 if everything is ok, = 1 if convergence problems
+    when It happens, a different x0 should be used.
+    ---------------------------------------------------------------------'''
     Fi = np.asarray(Fi)
     is_scalar = False if Fi.ndim > 0 else True  
     Fi.shape = (1,)*(1-Fi.ndim) + Fi.shape    
     m = np.size(Fi)
     quant = np.zeros(m)
+    flags = np.zeros((m), dtype = bool) # flag for the convergence of numerical solver
     for ii in range(m):
         myfun     = lambda y: mev_fun(y,Fi[ii],N,C,W)
-        res       = sc.optimize.fsolve(myfun, x0,full_output = 1)
+        res       = sc.optimize.fsolve(myfun, x0, full_output = 1)
         quant[ii] = res[0]
         info      = res[1]
         fval      = info['fvec']
         if fval > 1e-5:
             print('mevd_quant:: ERROR - fsolve does not work -  change x0')
+            flags[ii] = 1
         quant  = quant if not is_scalar else quant[0]
-    return quant
+        flags  = flags if not is_scalar else flags[0]
+    if potmode:
+        quant = quant + thresh
+    return quant, flags
 
 
-def mev_cdf(quant,N,C,W): 
-    '''  computes mev cdf for given quantiles quant 
-    given arrays of yearly parameters N,C,W'''
+def mev_cdf(quant, N, C, W, potmode = True, thresh = 0):
+    '''----------------------------------------------------------------
+    computes the mev cdf (cumulative distribution function):
+    given::
+        quant: quantile for which I compute the non exceedance probability
+        N,C,W: arrays of yearly parameters of the mev distribution
+        potmode: if True, considers the distributions of value above threshold (default is True)
+            (In practice if potmode=True, the distribution of excesses over threshold is computed
+            and then from it the cdf is computed for the effective quantile = quant - thresh)
+        thresh: threshold for defining ordinary events (default is zero)
+    returns::
+        mev_cdf: non exceedance probability for the given quantile
+    ----------------------------------------------------------------'''
     quant       = np.asarray(quant)
     is_scalar   = False if quant.ndim > 0 else True
     quant.shape = (1,)*(1-quant.ndim) + quant.shape      
     nyears      = N.shape[0]
+    if potmode:
+        quant = quant - thresh # Probability for given excess
     m = np.size(quant)
     mev_cdf = np.zeros(m)
     for ii in range (m):
-        mev_cdf[ii]     = np.sum( ( 1 - np.exp(-(quant[ii]/C)**W ))**N ) / nyears 
+        mev_cdf[ii]     = np.sum( ( 1 - np.exp(-(quant[ii]/C)**W ))**N ) / nyears
     mev_cdf     =  mev_cdf  if not is_scalar else  mev_cdf[0]
     return mev_cdf
 
 
-def mev_fit(df, ws = 1, how = 'pwm', threshold = 0):
-    ''' fit MEV to a dataframe of daily rainfall df - with PRCP, YEAR
+def mev_fit(df, ws = 1, how = 'pwm', threshold = 0, potmode = True, declu = False):
+    '''--------------------------------------------------------------------
+    fit MEV to a dataframe of daily rainfall observations df - with PRCP, YEAR fields
     fitting Weibull to windows of size ws (scalar integer value, default is 1)
-    
-    how = fitting method. available 'ml', 'pwm', 'ls'
-    default is pwm
-    return arrays of Weibull parameters N,C,W
-    arrays nwinsizes * nyears
-    '''
+    ws = window size in years (default is 1)
+    how = fitting method. available are 'ml', 'pwm', 'ls' (default is 'pwm')
+    (for 'ml'=maximum likelihood, 'pwm'=probability weighted moments, 'ls'=least squares)
+    potmode: if True, considers the distributions of value above threshold (default is True)
+    (In practice if potmode=True, the distribution of excesses over threshold is computed
+    and therefore N,C,W parameters refer to the distribution of excesses over threshold.
+    threshold: threshold for defining ordinary events (default is zero)
+    declu: If True, before fitting WEI decluster time series so that only indep events are used for fitting MEV
+    (computed globally for the whole time series)
+    compute the lag at which the correlation decays at the 90% percentile of the noise level
+    and keep only the largest value within that distance
+    return::
+    N,C,W = arrays of Weibull parameters for each year/block
+    (shape -> arrays nwinsizes * nyears)
+    --------------------------------------------------------------------------'''
+    if declu:
+        # decluster time series, and subs. it in the original data frame.
+        # (dome together for the entire time series)
+        sam = np.array(df.PRCP)
+        new_sam = decluster(sam)[0]
+        df.PRCP = new_sam
+
     years   = np.unique(df.YEAR)
     nyears  = np.size(years)
     datamat = np.zeros((nyears, 366))
@@ -365,76 +446,92 @@ def mev_fit(df, ws = 1, how = 'pwm', threshold = 0):
         datayear = np.array( df.PRCP[df['YEAR'].astype(int) == years[ii]])
         for jj in range(len(datayear)):
             datamat[ii, jj] = datayear[jj]
-            
     # check window is not longer than available sample        
     if ws > nyears:
         print('''mev_fit WARNING: the selected window size is larger than 
               the available sample. Using instead only one window with all
               years available. please check''')
         ws = nyears
-        
     winsize = np.int32( ws ) 
     numwind = nyears // winsize
     ncal2   = numwind*winsize
-
     datamat_cal_2 = datamat[:ncal2, :]
     wind_cal = datamat_cal_2.reshape( numwind, 366*winsize)
-    
     Ci = np.zeros(numwind)
     Wi = np.zeros(numwind)
     for iiw in range(numwind): # loop on windows of a given size
         sample = wind_cal[iiw, :] 
         # print('how = ', how)
-        temp, Ci[iiw], Wi[iiw] = wei_fit(sample, how = how, threshold = threshold)        
+        if not potmode:
+            temp, Ci[iiw], Wi[iiw] = wei_fit(sample, how = how, threshold = threshold)
+        else:
+            excesses = sample[sample > threshold] - threshold
+            temp, Ci[iiw], Wi[iiw] = wei_fit(excesses, how = how, threshold = 0)
     N = np.zeros(ncal2)
     for iiw in range(ncal2):
         sample = datamat_cal_2[iiw,:]
-        wets = sample[sample > threshold]
-        N[iiw]=np.size(wets)
-        
+        wets   = sample[sample > threshold]
+        N[iiw] = np.size(wets)
     C = np.repeat(Ci, winsize)
     W = np.repeat(Wi, winsize)
     return N,C,W
 
 
 def mev_CI(df, Fi_val, x0, ws = 1, ntimes = 1000, MEV_how = 'pwm', 
-                                         MEV_thresh = 0.0, std_how = 'boot'):
-    '''non parametric bootstrap technique for MEV
-    given a sample, at every iteration generates a new sample with replacement 
-    and then fit again mev and obtain a quantiles 
-    from data frame df ' missing data are assumed already treated
-    by default it returns MEV 95% CI in hyp normal distr 
-    USE NTIMES >> 20
-    
+        MEV_thresh = 0.0, std_how = 'boot', potmode = True, declu = False):
+    '''-----------------------------------------------------------------------
+    non parametric bootstrap technique for MEV
+    given an observed sample, at every bootstrap iteration generates a new sample with replacement
+    and then for each generated sample fits mev and obtains a quantile estimate
+    :arguments:
+    df = dataframe with precipitation data, where missing data are assumed to be already taken care of
+    Fi_val = value of non exceedance probability for which quantile is estimated
+    ntimes: number of bootstrap resampling times (default 1000). It should b elarge, at least 20 to allow to compute
+    empirical MEV 95% CI in hyp. estimates are normal distribution
+    MEV_how: fitting method for WEI-MEV (default 'pwm' probability weighted moments)
+    MEV_thresh: threshold for selecting ordinary data. (default threshold = 0)
+    potmode: if True, fit WEI to excesses above threshold
+             if False, fit WEI to entire values, neglecting observations below threshold (default is True)
+    declu: If True, before fitting WEI decluster time series so that only indep events are used for fitting MEV
+    (computed globally for the whole time series)
     POSSIBLE OPTIONS FOR COMPUTING CONFIDENCE INTERVALS:
     ---------------------------------------------------------------------------
-    CI_how = 'delta': use delta method under the hyp. that all are indep parameters
-                --> and compute their individual affects on GEV quantiles
-    CI_how = 'boot': do non parametric bootstrapping for daily values 
-                          and number of events/year
-                          NB: This might reduce variability and thus MEV quantiles?
-                          then hyp. normal distr of quantiles
-                          (DEFAULT)
-    CI_how = 'boot_cdf': as before, but without normality assumption. But I need 
+    std_how = 'boot': do non-parametric bootstrapping for daily values
+                      and number of events/year
+                      NB: This might reduce variability
+                      then hyp. normal distribution of quantiles
+                      (default)
+    std_how = 'delta': use delta method under the hyp. that all are independent parameters
+                       and compute their individual effects on MEV quantiles
+    std_how = 'boot_cdf': as before, but without normality assumption. But I need
                          ntimes large enough to compute prob of 95% and 5%.
-    CI_how = 'par': only resample from the arrays of (Ni, Ci, Wi) for each year/window - 
-                --> am I missing some of the variability in this way?
-                (default is boot)
+    std_how = 'par': only resample from the arrays of (Ni, Ci, Wi) for each year/window -
+                (default is 'boot')
+                Only 'boot' and 'boot_par' available
     ---------------------------------------------------------------------------
-    '''
-    # perhaps reshuffling N as well would be better
-    # I.e., parametric bootstrap - fix it
-    
-    # Write - case of asymmetric CI - with percentage instead of stdv
-    # and one using the hessian and the delta method if possible
+    Returns:
+        Q_est: 2D array of estimated quantiles (mean over ntimes realizations)
+        Q_up: 2D array of quantiles CI upper limit (mean + 2* stdv over ntimes realizations)
+        Q_low: 2D array of quantiles CI lower limit (mean - 2* stdv over ntimes realizations)
+        Flags: 2D array (ntimes*num_quantiles) with flag for converge of numeric solution
+        if = 0 everything converge, if = 1 convergence not achieved.
+    -------------------------------------------------------------------------'''
+    if declu:
+        # decluster time series, and subs. it in the original data frame.
+        # (dome together for the entire time series)
+        sam = np.array(df.PRCP)
+        new_sam = decluster(sam)[0]
+        df.PRCP = new_sam
+
     Fi_val       = np.asarray(Fi_val)
     is_scalar   = False if Fi_val.ndim > 0 else True
     Fi_val.shape = (1,)*(1-Fi_val.ndim) + Fi_val.shape
     m = np.size(Fi_val) 
     QM = np.zeros((ntimes, m))
-    
-    N, C, W = mev_fit(df, ws = ws, how = MEV_how, threshold = MEV_thresh)
-    Q_est = mev_quant(Fi_val, x0, N, C, W)
+    Flags = np.zeros((ntimes, m))
+
+    N, C, W = mev_fit(df, ws = ws, how = MEV_how, threshold = MEV_thresh, potmode = potmode)
+    Q_est, flags = mev_quant(Fi_val, x0, N, C, W, potmode = potmode, thresh = MEV_thresh)
 
 #    if std_how == 'hess': # NOT SURE IT IS OK - IMPLIES INDEP PARAMETERS
 #        print('mev_CI ERROR: method "hess" not available yet')
@@ -460,8 +557,8 @@ def mev_CI(df, Fi_val, x0, ws = 1, ntimes = 1000, MEV_how = 'pwm',
         for ii in range(ntimes):
             # print('mev_CI - boot ntimes:', ii ,'/', ntimes)
             dfr = mev_boot_yearly(df) # resample daily data
-            N, C, W = mev_fit(dfr, ws, how = MEV_how, threshold = MEV_thresh)
-            QM[ii,:] = mev_quant(Fi_val, x0, N, C, W)
+            N, C, W = mev_fit(dfr, ws, how = MEV_how, threshold = MEV_thresh, potmode = potmode)
+            QM[ii,:], Flags[ii, :] = mev_quant(Fi_val, x0, N, C, W, potmode = potmode, thresh = MEV_thresh)
         Q_up = np.zeros(m)
         Q_low = np.zeros(m)
         for jj in range(m):
@@ -477,8 +574,8 @@ def mev_CI(df, Fi_val, x0, ws = 1, ntimes = 1000, MEV_how = 'pwm',
         fi = np.arange(1, ntimes + 1)/(ntimes + 1)
         for ii in range(ntimes):
             dfr = mev_boot_yearly(df) # resample daily data
-            N, C, W = mev_fit(dfr, ws, how = MEV_how, threshold = MEV_thresh)
-            QM[ii,:] = mev_quant(Fi_val, x0, N, C, W)
+            N, C, W = mev_fit(dfr, ws, how = MEV_how, threshold = MEV_thresh, potmode=potmode)
+            QM[ii,:], Flags[ii, :] = mev_quant(Fi_val, x0, N, C, W, potmode = potmode, thresh = MEV_thresh)
         Q_up = np.zeros(m)
         Q_low = np.zeros(m)
         for jj in range(m):
@@ -511,7 +608,8 @@ def mev_CI(df, Fi_val, x0, ws = 1, ntimes = 1000, MEV_how = 'pwm',
     Q_up    =  Q_up    if not is_scalar else  Q_up[0]
     Q_low   =  Q_low   if not is_scalar else  Q_low[0]
     Q_est  =  Q_est  if not is_scalar else  Q_est[0]
-    return Q_est, Q_up, Q_low
+    Flags = Flags if not is_scalar else Flags[0]
+    return Q_est, Q_up, Q_low, Flags
         
         
 #def mev_boot(df):
@@ -519,7 +617,6 @@ def mev_CI(df, Fi_val, x0, ws = 1, ntimes = 1000, MEV_how = 'pwm',
 #    reshuffle i) the number of events for each year in the series
 #    ii) the daily events. For each year generates N_i events.
 #    For both steps, we sample with replacement.'''
-#    # check this function - 
 #    ndays = 366
 #    years   = np.unique(df.YEAR)
 #    nyears  = np.size(years)
@@ -555,7 +652,6 @@ def mev_boot_yearly(df):
     reshuffle i) the number of events for each year in the series
     ii) the daily events. For each year generates N_i events.
     For both steps, we sample with replacement.'''
-    # check this function - 
     ndays = 366
     years   = np.unique(df.YEAR)
     nyears  = np.size(years)
@@ -603,7 +699,54 @@ def mev_boot_yearly(df):
 ###############################################################################
 ###############################################################################  
 
-def remove_missing_years(df,nmin):
+
+def decluster(sample, noise_lag = 10, noise_prob = 0.9, max_lag = 30):
+    '''------------------------------------------------------------
+    Decluster a rainfall time series. Eliminate the non-zero value within a correlation window
+    Once correlation time scale is compute, running windows with its size are selected.
+    within each of them, I only keep the largest event observed.
+    :param sample: the time series to be declustered.
+    :param noise_lag: minimum lag at which I consider the ACF to be noise (defult = 10)
+    :param noise_prob: assume as noise correlation the 75% percentile of values beyond noise_lag
+    :param max_lag: max lag used to compute the noise level (default = 30)
+    :return:
+    -> dec_sample -> declustered time series
+    -> dec_lag    -> running lag window size in which I only keep the maximum
+    --------------------------------------------------------------'''
+    det_sample = sample.copy()
+    # noise_lag = 6 # number of days after which I assume the time series to be perfectly scorrelated
+    # noise_prob = 0.75 # quantile of correlation that we assume to represent noise
+    lags = np.arange(max_lag) # 20 - days
+    nlags = np.size(lags)
+    time_corr = np.zeros(nlags)
+    n = np.size(sample)
+    for iil in lags:
+        mylag = lags[iil]
+        xt = sample[:n-mylag]
+        xtpt = sample[mylag:n]
+        time_corr[iil] = pearsonr(xt, xtpt)[0]
+    noise = time_corr[noise_lag:]
+    sorted_noise = np.sort(noise) # ascend by default
+    num_noise = np.size(noise)
+    fi = np.arange(num_noise+1)/(num_noise+1) # non exceedance
+    mypos = np.argmin( np.abs(fi-noise_prob))
+    noise_level = sorted_noise[mypos]
+    # first crossing of noise level
+    racf = time_corr - noise_level
+    # now find its first zero crossing
+    zero_crossings = np.where(np.diff(np.sign(racf)))[0]
+    dec_par = zero_crossings[0]
+    # mylags = np.arange(1, dec_par + 1)
+    for iis in range(n-dec_par):
+        window = sample[iis:iis+dec_par+1]
+        loc_max = np.max(window)
+        for iie in range(np.size(window)):
+            if window[iie] < loc_max:
+                det_sample[iis + iie] = 0
+    return det_sample, dec_par
+
+
+def remove_missing_years(df, nmin):
     '''
     # input has to be a pandas data frame df
     # including the variables YEAR, PRCP
@@ -629,14 +772,18 @@ def remove_missing_years(df,nmin):
     # check how many years remain      
     years_all_2 = df['YEAR']    
     nyears2 = np.size(pd.Series.unique(years_all_2))
-    return df,nyears2, nyears1
+    return df, nyears2, nyears1
 
 
 def tab_rain_max(df):
-    '''  input has to be a pandas data frame df
-    including the variables YEAR, PRCP
-    return vectors of annual maxima (ranked ascend), emp cdf, return time
-    Default using Weibull plotting position for non exceedance probability'''
+    '''--------------------------------------------------------------------------
+    arguments: df, pandas data frame with fields YEAR, PRCP
+    returns:
+    XI -> array of annual maxima (ranked in ascending order)
+    Fi -> Weibull plotting position estimate of their non exceedance probability
+    TR -> their relative return times
+    Default using Weibull plotting position for non exceedance probability
+    -----------------------------------------------------------------------------'''
     years_all  = df['YEAR']
     years      = np.unique(years_all)
     nyears     = np.size(years)
@@ -650,71 +797,113 @@ def tab_rain_max(df):
     return XI,Fi,TR
 
 
-def table_rainfall_maxima(df, how = 'pwm', thresh = 0):
-    '''
-    input has to be a pandas data frame df
-    including the variables YEAR, PRCP
-    and a threshold for fitting Weibull parameters
-    return vectors of annual maxima (ranked ascend), emp cdf, return time
-    Default using Weibull plotting position for non exceedance probability
-    and weibull NCW for each year in the record
-    '''
+def table_rainfall_maxima(df, how = 'pwm', thresh = 0, potmode = True, declu = False):
+    '''--------------------------------------------------------------------------
+    arguments:
+    df, pandas data frame with fields YEAR, PRCP
+    how = method for fitting Weibull (default 'pwm' for probability weighted moments)
+    thresh: threshold for selecting ordinary data. (default threshold = 0)
+    potmode: if True, fit WEI to excesses above threshold
+             if False, fit WEI to entire values, neglecting observations below threshold (default is True)
+     declu: If True, before fitting WEI decluster time series so that only indep events are used for fitting MEV
+    (computed globally for the whole time series)
+    returns:
+    XI -> array of annual maxima (ranked in ascending order)
+    Fi -> Weibull plotting position estimate of their non exceedance probability
+    TR -> their relative return times
+    NCW -> Array of shape nyears*3 with yearly parameters values in order N, C, W.
+    ## you need to take care of missing values / nans before using this function, use
+    ## remove missing years.
+    -----------------------------------------------------------------------------'''
+
+    if declu:
+        # decluster time series, and subs. it in the original data frame.
+        # (dome together for the entire time series)
+        sam = np.array(df.PRCP)
+        new_sam = decluster(sam)[0]
+        df.PRCP = new_sam
+
     years_all  = df['YEAR']
     years      = pd.Series.unique(years_all)
     nyears     = len(years)
-    maxima     = np.zeros([nyears,1])
-    NCW        = np.zeros([nyears,3])
+    maxima     = np.zeros([nyears, 1])
+    NCW        = np.zeros([nyears, 3])
     for jj in range(nyears):
-        my_year      = df.PRCP[df['YEAR'] == years[jj]]
-        maxima[jj,0] = np.max(my_year)
-        (NCW[jj,0], NCW[jj,1], NCW[jj,2]) = wei_fit(my_year , how = how, 
-                                                       threshold = thresh)
-    XI = np.sort(maxima,axis = 0) # default ascend
-    Fi = np.arange(1,nyears+1)/(nyears + 1)
+        my_year       = df.PRCP[df['YEAR'] == years[jj]]
+        maxima[jj, 0] = np.max(my_year)
+        if potmode:
+            excesses = my_year[my_year > thresh] - thresh
+            (NCW[jj, 0], NCW[jj, 1], NCW[jj, 2]) = wei_fit(excesses , how = how,
+                                                           threshold = 0)
+        else:
+            (NCW[jj, 0], NCW[jj, 1], NCW[jj, 2]) = wei_fit(my_year , how = how,
+                                               threshold = thresh)
+    XI = np.sort(maxima, axis = 0) # default ascend
+    Fi = np.arange(1, nyears + 1)/(nyears + 1)
     TR = 1/(1 - Fi)  
-    return XI,Fi,TR,NCW
+    return XI, Fi, TR, NCW
 
 
 def fit_EV_models(df, tr_min = 5, ws = 1, GEV_how = 'lmom', MEV_how = 'pwm', 
-                 MEV_thresh = 0, POT_way = 'ea', POT_val = 3, POT_how = 'ml',
+                  MEV_thresh = 0, MEV_potmode = True, POT_way = 'ea', POT_val = 3, POT_how = 'ml',
         ci = False, ntimes = 1000, std_how_MEV = 'boot', std_how_GEV = 'hess', 
-                                            std_how_POT = 'hess', rmy = 36):
-    ''' fit MEV, GEV and POT to daily data in the dataframe df
-    with fields PRCP and YEAR, and compare them with original annual maxima
+                                            std_how_POT = 'hess', rmy = 36, declu = False):
+    ''' -------------------------------------------------------------------------------
+    fit MEV, GEV and POT to daily data in the dataframe df
+    with fields PRCP and YEAR, and compare them with observed annual maxima
     compute quantiles - and non exceedance probabilities
     and compare with the same dataset / produce QQ and PP plots
     default methods are PWM, LMOM, and ML for MEV-GEV-POT respectively
-    MEV - fit Weibull to windows of size ws, default ws = 1 (yearly Weibull)'''
-    # ADD COMPUTATION OF CONFIDENCE INTERVALS
-    df, ny2, ny1 = remove_missing_years(df,rmy)
+    MEV - fit Weibull to windows of size ws, default ws = 1 (yearly Weibull)
+
+    declu: If True, before fitting WEI decluster time series so that only indep events are used for fitting MEV
+    (computed globally for the whole time series)
+    -----------------------------------------------------------------------------------'''
+
+    df, ny2, ny1 = remove_missing_years(df, rmy)
+
+    if declu:
+        # decluster time series, and subs. it in the original data frame.
+        # (dome together for the entire time series)
+        sam = np.array(df.PRCP)
+        new_sam = decluster(sam)[0]
+        df.PRCP = new_sam
+
     XI,Fi,TR     = tab_rain_max(df)
     tr_mask      = TR > tr_min
     TR_val       = TR[tr_mask]
     XI_val       = XI[tr_mask]
     Fi_val       = Fi[tr_mask]
+
     #x0           = np.mean(XI_val) - 0.2*np.std(XI_val)
-    
     x0 = 50.0
-    # MOD - try a few different
-    # print(x0)
+
+    if declu:
+        # decluster time series, and subs. it in the original data frame.
+        # (dome together for the entire time series)
+        sam = np.array(df.PRCP)
+        new_sam = decluster(sam)[0]
+        df.PRCP = new_sam
+
     # fit distributions
-    csi,psi,mu      = gev.gev_fit(XI, how = GEV_how)
-    N, C, W         = mev_fit(df, ws= ws, how = MEV_how, threshold = MEV_thresh)
+    csi, psi, mu    = gev.gev_fit(XI, how = GEV_how)
+    N, C, W         = mev_fit(df, ws= ws, how = MEV_how, threshold = MEV_thresh, potmode = MEV_potmode)
     csip, psip, mup = gev.pot_fit(df, datatype = 'df', way = POT_way, ea = POT_val,
                                sp = POT_val, thresh = POT_val,  how = POT_how)
     # compute quantiles
-    QM           = mev_quant(Fi_val, x0, N, C, W)
+    QM, flags    = mev_quant(Fi_val, x0, N, C, W, potmode = MEV_potmode, thresh = MEV_thresh)
     QG           = mu + psi/csi*(( -np.log(Fi_val))**(-csi) -1)
     QP           = mup + psip/csip*(( -np.log(Fi_val))**(-csip) -1)
-    # compute non exceedance frequencies
-    FhM          = mev_cdf(XI_val,N,C,W)
+
+    # compute non-exceedance frequencies
+    FhM          = mev_cdf(XI_val,N,C,W, potmode = MEV_potmode, thresh = MEV_thresh)
     FhG          = gev.gev_cdf(XI_val, csi, psi, mu)
     FhP          = gev.gev_cdf(XI_val, csip, psip, mup)
     
     if ci:
         # MEV - re-evaluate the mean here!
-        QmM, QuM, QlM = mev_CI(df, Fi_val, x0, ws = ws, ntimes = ntimes, 
-                  MEV_how = MEV_how, MEV_thresh = MEV_thresh , std_how = std_how_MEV)        
+        QmM, QuM, QlM, Flags = mev_CI(df, Fi_val, x0, ws = ws, ntimes = ntimes,
+                               MEV_how = MEV_how, MEV_thresh = MEV_thresh , std_how = std_how_MEV, potmode = MEV_potmode)        
         # POT
         parhat_POT, parpot_POT, parstd_POT, varcov_POT = gev.pot_fit(df, datatype = 'df', way = POT_way, ea = POT_val, 
                   sp = POT_val, thresh = POT_val, how = POT_how, std = True, std_how = std_how_POT, std_num = ntimes)
@@ -724,20 +913,23 @@ def fit_EV_models(df, tr_min = 5, ws = 1, GEV_how = 'lmom', MEV_how = 'pwm',
                         std = True, std_how = std_how_GEV, std_num = ntimes)
         QmG, QuG, QlG = gev.gev_quant(Fi_val, csi, psi, mu, ci = True, varcov = varcov_GEV)
         
-        return TR_val, XI_val, Fi_val, QM, QG, QP, QuM, QuG, QuP, QlM, QlG, QlP, FhM, FhG, FhP 
-        # return TR_val, XI_val, Fi_val, QM, QG, QP, QmM, QmG, QmP, QuM, QuG, QuP, QlM, QlG, QlP, FhM, FhG, FhP 
-
+        return TR_val, XI_val, Fi_val, QM, QG, QP, QuM, QuG, QuP, QlM, QlG, QlP, FhM, FhG, FhP, flags
+        # return TR_val, XI_val, Fi_val, QM, QG, QP, QmM, QmG, QmP, QuM, QuG, QuP, QlM, QlG, QlP, FhM, FhG, FhP
     else:
-        return TR_val, XI_val, Fi_val, QM, QG, QP, FhM, FhG, FhP
+        return TR_val, XI_val, Fi_val, QM, QG, QP, FhM, FhG, FhP, flags
     
 
-def shuffle_mat(datamat, nyears, ncal, nval):
+def shuffle_mat(datamat, ncal, nval):
     # this only shuffles YEARS in a sample of daily rainfall -
     # for cross validation of extreme value models
     '''given an array with shape (nyears*ndays)
     scramble its years
     and returns a calibration martrix, calibration maxima,
-    and independent validation maxima'''   
+    and independent validation maxima'''
+
+    # number of wet days for each year
+    nyears = datamat.shape[0]
+
     randy     = np.random.permutation( int(nyears) ) 
     datamat_r = datamat[randy]
     mat_cal   = datamat_r[:ncal, :]
@@ -747,7 +939,7 @@ def shuffle_mat(datamat, nyears, ncal, nval):
     return mat_cal, max_cal, max_val, datamat_r
 
 
-def shuffle_all(datamat, nyears, ncal, nval):
+def shuffle_all(datamat, ncal, nval):
     # this only shuffles N and all daily values -
     # as in Zorzetto et al, 2016
     # for cross validation of extreme value models
@@ -790,33 +982,22 @@ def shuffle_all(datamat, nyears, ncal, nval):
     max_cal   = maxima[:ncal]
     max_val   = maxima[ncal:ncal+nval]
     return mat_cal, max_cal, max_val, datamat_r
-        
-        
-        
-        
-        
-        
-        
-#    randy     = np.random.permutation( int(nyears) ) 
-#    datamat_r = datamat[randy]
-#    mat_cal   = datamat_r[:ncal, :]
-#    maxima    = np.max(datamat_r, axis = 1) # yearly maxima
-#    max_cal   = maxima[:ncal]
-#    max_val   = maxima[ncal:ncal+nval]
-#    return mat_cal, max_cal, max_val, datamat_r
 
 
 def cross_validation(df, ngen, ncal, nval, tr_min = 5, ws=[1],
-                     GEV_how = 'lmom', MEV_how = 'pwm', MEV_thresh = 0,
+                     GEV_how = 'lmom', MEV_how = 'pwm', MEV_thresh = 0, MEV_potmode = True,
                  POT_way = 'ea', POT_val = [3], cross = True, ncal_auto = 100,
-                 shuff = 'year'):
-    ''' FIT MEV and GEV and perform validation with stationary time series
-    obtained reshuffling the years of the original time series    
+                 shuff = 'year', declu = False):
+    '''------------------------------------------------------------------------
+    FIT MEV and GEV and perform validation with stationary time series
+    obtained reshuffling the years of the original time series
+    ## you need to take care of missing values / nans before using this function,
+    ## use 'remove missing years'.
     ###########################################################################
     INPUT::
-        df -  dataframe with fields 'PRCP' daily precipitation values (float)
+        df -  data frame with fields 'PRCP' daily precipitation values (float)
                                     'YEAR' year in format yyyy (integer/float)
-        ngen - number of random reshufflings of the dataset
+        ngen - number of random re-shuffling of the dataset
         ncal - nyears of data for calibration (used in cross - mode only)
         nval - nyears of data for validation  (used in cross - mode only)
         
@@ -833,6 +1014,9 @@ def cross_validation(df, ngen, ncal, nval, tr_min = 5, ws=[1],
         MEV_thresh - optional threshold for MEV. only works for how = 'pwm'
                      probability mass below threshold is just ignored.
                      (default value is zero)
+                     
+        MEV_potmode - If True, consider pdf of daily rainfall with area 1 above threshold 
+                    (default = True)
                      
         POT_way - threshold selection method for POT. can be:
             'ea' fixed number average exceedances / year
@@ -868,9 +1052,16 @@ def cross_validation(df, ngen, ncal, nval, tr_min = 5, ws=[1],
         eg - GEV relative errors
             (array with shape:  ngen * ntr )  
         eg - POT relative errors
-            (array with shape:  ngen * ntr )  
-        
+            (array with shape:  ngen * ntr )
     ########################################################################'''
+
+    if declu:
+        # decluster time series, and subs. it in the original data frame.
+        # (dome together for the entire time series)
+        sam = np.array(df.PRCP)
+        new_sam = decluster(sam)[0]
+        df.PRCP = new_sam
+
     years   = np.unique(df.YEAR)
     nyears  = np.size(years)
     datamat = np.zeros((nyears, 366))
@@ -896,7 +1087,8 @@ def cross_validation(df, ngen, ncal, nval, tr_min = 5, ws=[1],
     ntr       = np.size(TR_val)
     nwinsizes = np.size(ws)   
     nthresh   = np.size(POT_val)
-    
+
+    Flags     = np.zeros((ngen, nwinsizes, ntr))
     em        = np.zeros((ngen, nwinsizes, ntr))
     eg        = np.zeros((ngen, ntr))
     ep        = np.zeros((ngen, nthresh, ntr))
@@ -907,11 +1099,9 @@ def cross_validation(df, ngen, ncal, nval, tr_min = 5, ws=[1],
     for iig in range(ngen): # loop on random generations
         
         if shuff == 'year': # resample years only, or
-            mat_cal, max_cal, max_val, datamat_r = shuffle_mat(datamat, nyears, 
-                                                              ncal, nval)
+            mat_cal, max_cal, max_val, datamat_r = shuffle_mat(datamat, ncal, nval)
         elif shuff == 'all': # or reshuffle daily values
-            mat_cal, max_cal, max_val, datamat_r = shuffle_all(datamat, nyears, 
-                                                              ncal, nval)
+            mat_cal, max_cal, max_val, datamat_r = shuffle_all(datamat, ncal, nval)
         if cross == True:            
             XI_val0    = np.sort(max_val, axis = 0)
             XI_val     = XI_val0[index_tr] 
@@ -939,7 +1129,6 @@ def cross_validation(df, ngen, ncal, nval, tr_min = 5, ws=[1],
         
             for iitr in range(ntr): # compute pot relative errors
                 ep[iig, iith, iitr]  = (QP[iitr] - XI_val[iitr])/XI_val[iitr]
-        
             
         # fit MEV for blocks of differing size
         x0 = np.mean(max_cal) # mev quantile first guess / change it if needed
@@ -964,20 +1153,30 @@ def cross_validation(df, ngen, ncal, nval, tr_min = 5, ws=[1],
             Wi = np.zeros(numwind)
             for iiw in range(numwind): # loop on windows of a given size
                 sample = wind_cal[iiw, :]                
-                # compute the global Weibull parameters   
-                temp, Ci[iiw], Wi[iiw]  = wei_fit(sample , how = MEV_how, 
-                                                       threshold = MEV_thresh)                
+                # compute the global Weibull parameters
+                if MEV_potmode:
+                    excesses = sample[sample > MEV_thresh]- MEV_thresh
+                    temp, Ci[iiw], Wi[iiw]  = wei_fit(excesses , how = MEV_how, 
+                                                      threshold = 0)    
+                else:
+                    temp, Ci[iiw], Wi[iiw]  = wei_fit(sample , how = MEV_how, 
+                                                      threshold = MEV_thresh)                
             N = np.zeros(ncal2)
             for iiw in range(ncal2):
                 sample = datamat_cal_2[iiw,:]
-                wets = sample[sample > MEV_thresh]
+                wets = sample[sample > MEV_thresh] # Ok for potmode as well - N is the same above threshold
                 N[iiw]=np.size(wets)
                 
             C = np.repeat(Ci, winsize)
             W = np.repeat(Wi, winsize)
-            QM  = mev_quant(Fi_val, x0, N, C, W)
-            for iitr in range(ntr): # comput emev relative errors
-                em[iig, iiws, iitr] = (QM[iitr] - XI_val[iitr])/XI_val[iitr]
+            QM, flags = mev_quant(Fi_val, x0, N, C, W, potmode = MEV_potmode, thresh = MEV_thresh)
+
+            Flags[iig, iiws, :] = flags
+            em[iig, iiws, :] = (QM - XI_val) /XI_val
+
+            # for iitr in range(ntr): # comput emev relative errors
+            #     em[iig, iiws, iitr] = (QM[iitr] - XI_val[iitr])/XI_val[iitr]
+            #     Flags[iig, iiws, :] = flags
                 
     # compute root mean squared errors (RMSE)       
     for iitr in range(ntr):
@@ -993,11 +1192,12 @@ def cross_validation(df, ngen, ncal, nval, tr_min = 5, ws=[1],
         for iiws in range(nwinsizes):
             emt = em[:, iiws, iitr].flatten()
             m_rmse[iiws, iitr]  =  np.sqrt(  np.mean( emt**2 ))
-    return TR_val, m_rmse, g_rmse, p_rmse, em, eg, ep
+    return TR_val, m_rmse, g_rmse, p_rmse, em, eg, ep, Flags
 
 
 def slideover(df, winsize = 30, Tr = 100, display = True, ci = True, ntimes = 100):
-    ''' perform EV analysis on sliding and overlapping windows'''
+    ''' perform EV analysis on sliding and overlapping windows
+    declustering and threshold not supported here - for now'''
     years = np.unique(df.YEAR)
     nyears = np.size(years)
     nwin = nyears - winsize + 1    
@@ -1115,126 +1315,5 @@ def slideover(df, winsize = 30, Tr = 100, display = True, ci = True, ntimes = 10
         return central_year, mq, gq, pq, fig1
     
     
-###############################################################################
-###############################################################################
-    
-##############   FUNCTIONS TO BE REMOVED IN A FUTURE VERSION - SLOW ###########
 
-###############################################################################
-###############################################################################
-    
-def shuffle_years(df):
-    # This function is awfully slow -is not necessary, use shuffle_mat instead!
-    ''' given a dataframe df with YEAR, PRCP columns
-    produce a dataframe with observed years in reshuffled order'''
-    years = np.unique( df.YEAR )
-    neworder = list( np.random.permutation(years) )
-    dfm = df.set_index(['YEAR', 'DATE'], inplace = False) # multiindex object
-    newindex = sorted(dfm.index, key = lambda x: neworder.index(x[0]))
-    dfm2 = dfm.reindex(newindex)
-    dfR = dfm2.reset_index(inplace = False) 
-    ###########################################################################
-    ############ Tested  12-10-2017 with the following df #####################
-    ###########################################################################
-    #A = np.array( [[1990, 1990, 1990, 1991, 1991, 1991, 1992, 1992, 1992],
-    #                [19900101, 19900102, 19900103, 19910101, 19910102, 
-    #                            19910103, 19920101, 19920102, 19920103],
-    #                [1,2,3,4,5,6,7,8,9],
-    #                [11,12,13,14,15,16,17,18,19]]).transpose()    
-    #B = pd.DataFrame(A)    
-    #B.columns = ['YEAR', 'DATE', 'PRCP', 'OTHER']
-    #dfR = mev.shuffle_years(B)
-    ###########################################################################
-    ###########################################################################
-    return dfR
-
-# molto lento
-def mevd_quant_windows(df, Fi, x0, winsize = 1, how = 'pwm', threshold = 0):
-    ''' returns an array of MEV-estimated quantiles QM
-    fitting MEV to the daily rainfall data in the dataframe df, 
-    which must contain entries YEAR and PRCP.
-    x0 = initial guess for numerical procedure
-    winsize = size [in years] of the window for fitting Weibull -default 1 year
-    how = fitting method for Weibull -default is probability weighted moments
-    (other choices are 'ml' -for max.likelihood and  'ls' -for least seuares)
-    threshold = for fitting Weibull. default value is zero.
-    Only available for pwm
-    '''
-    # very slow - use cross validation instead
-    # print(df.head())
-    years = np.unique( df.YEAR)
-    # print(years)
-    ncal =  np.size( years ) # number of years of calibraiton
-    # print(ncal)
-    # print(winsize)
-    # winsize = 5
-    # numwin = np.int8( np.floor(ncal/winsize))
-    numwin = ncal//winsize # integer part of the division
-    ncal2 = numwin*winsize
-    # print(numwin)
-    # print(winsize)
-    # print(ncal2)
-    years2 = years[:ncal2]
-    to_exclude = years[ncal2:]
-    df2 = df[~df.YEAR.isin(to_exclude)]
-
-    all_groups = np.repeat( np.arange(numwin), winsize)    
-    equiv = dict(zip(years2, all_groups)) # dictionary
-    # df2["GROUP"] = df2["YEAR"].map(equiv)
-    df2["GROUP"] = df2["YEAR"].map(equiv)
-    # df2['GROUP'] = pd.Series(np.zeros(df2.size))
-    # df2.loc['GROUP'] = df2['YEAR'].map(equiv)
-    groups = np.unique(all_groups)
-    
-    # fit N for each year
-    N = np.zeros(ncal2)
-    for ii in range(ncal2):
-        dataii = df2.PRCP[df2.YEAR == years2[ii]]
-        N[ii] = np.size( dataii[dataii > 0] )
-        
-    # fit C and w for each group
-    Ci = np.zeros(numwin)
-    Wi = np.zeros(numwin)    
-    for ii in range(numwin):
-        sample = df2.PRCP[df2.GROUP == groups[ii]]
-        # fit Weibull in the selected fashion:
-        ( ni, Ci[ii], Wi[ii] )   = wei_fit(sample , how = how, 
-                                                       threshold = threshold)                
-        ni, Ci[ii], Wi[ii] = wei_fit_pwm(sample)
-    C = np.repeat(Ci, winsize)
-    W = np.repeat(Wi, winsize)
-    
-    # compute MEV quantiles for the given NCW
-    QM = mev_quant(Fi, x0, N, C, W) 
-    return QM
-
-# function probably not very useful anymore
-# to be removed in future versions
-def mevd_qufit(df, Fi, x0, how = 'pwm', threshold = 0): 
-    # version to be removed in the future
-    '''
-    fit MEV to a data frame sample
-    and compute quantiles for a range of non exceedance probab Fi
-    computes the MEV quantile for a given return time
-    '''
-    years_all  = df['YEAR']
-    years      = pd.Series.unique(years_all)
-    nyears     = len(years)
-    NCW        = np.zeros([nyears,3])
-    for jj in range(nyears):
-        my_year      = df.PRCP[df['YEAR'] == years[jj]]
-        (NCW[jj,0], NCW[jj,1], NCW[jj,2]) = wei_fit(my_year, how = 'pwm', 
-                                                       threshold = threshold)              
-    m = np.size(Fi)
-    QM = np.zeros(m)
-    for ii in range(m):
-        myfun = lambda y: mev_fun(y,Fi[ii],NCW[:,0], NCW[:,1], NCW[:,2])
-        res   = sc.optimize.fsolve(myfun, x0,full_output = 1)
-        QM[ii] = res[0]
-        info = res[1]
-        fval = info['fvec']
-        # print(fval)
-        if fval > 1e-5:
-            print('warning - there is something wrong solving fsolve')
-    return QM
 
