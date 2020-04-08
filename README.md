@@ -1,6 +1,6 @@
 # mevpy 
 
-Version 1.03
+Version 1.0.6
 
 Metastatistical Extreme Value Analysis in Python (mevpy) is a set of functions that implement 
 the Metastatistical Extreme Value (MEV) Distribution and related
